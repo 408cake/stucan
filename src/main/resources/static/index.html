@@ -127,6 +127,31 @@
     let currentTicker = null;
     const tickerHistory = {};
 
+    // 수익률 계산 및 화면 표시 함수
+    function updateProfitRate(curPrice, initPrice) {
+        const profitEl = document.getElementById('labelProfitRate');
+        if (!curPrice || !initPrice || initPrice <= 0) {
+            profitEl.textContent = '-';
+            profitEl.style.color = '#d1d4dc';
+            return;
+        }
+
+        // 수익률 공식 적용 (소수점 2자리)
+        const rate = ((curPrice - initPrice) / initPrice) * 100;
+        const formattedRate = rate.toFixed(2);
+
+        if (rate > 0) {
+            profitEl.textContent = `+${formattedRate}%`;
+            profitEl.style.color = '#26a69a'; // 상승 (초록)
+        } else if (rate < 0) {
+            profitEl.textContent = `${formattedRate}%`;
+            profitEl.style.color = '#ef5350'; // 하락 (빨강)
+        } else {
+            profitEl.textContent = `0.00%`;
+            profitEl.style.color = '#d1d4dc'; // 보합 (흰/회색)
+        }
+    }
+
     // 차트 생성
     const chartContainer = document.getElementById('chart');
     const chart = LightweightCharts.createChart(chartContainer, {
@@ -196,7 +221,13 @@
         const hist = tickerHistory[symbol] || [];
         candleSeries.setData(hist);
         if (hist.length > 0) {
-            document.getElementById('labelCurPrice').textContent = hist[hist.length - 1].close;
+            const lastClose = hist[hist.length - 1].close;
+            document.getElementById('labelCurPrice').textContent = lastClose;
+            // 탭 전환 시 수익률 갱신
+            updateProfitRate(lastClose, currentTicker.initialPrice);
+        } else {
+            document.getElementById('labelCurPrice').textContent = '-';
+            updateProfitRate(null, null);
         }
     }
 
@@ -230,7 +261,9 @@
                     if (currentTicker && sym === currentTicker.symbol) {
                         candleSeries.update(data.candle);
                         document.getElementById('labelCurPrice').textContent = data.price;
+                        updateProfitRate(data.price, currentTicker.initialPrice);
                     }
+
                 }
             }
         } catch (err) {
