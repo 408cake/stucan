@@ -59,6 +59,8 @@
     </div>
     <div>
         <button class="action-btn" onclick="openUpdateModal()">선택 과목 수정</button>
+        <!-- 삭제 버튼 추가 -->
+        <button class="action-btn danger" onclick="deleteCurrentTicker()">선택 과목 삭제</button>
     </div>
 </div>
 
@@ -66,6 +68,7 @@
     <div>선택 종목: <span id="labelName" style="font-weight:bold;">-</span> (<span id="labelSymbol">-</span>)</div>
     <div>처음 가격: <span id="labelInitPrice" style="font-weight:bold;">-</span></div>
     <div>현재 가격: <span id="labelCurPrice" class="price-val">-</span></div>
+    <div>수익률: <span id="labelProfitRate" style="font-weight:bold;">-</span></div>
     <div>목표 가격: <span id="labelTargetPrice" class="target-val">-</span></div>
 </div>
 
@@ -288,6 +291,39 @@
             alert('Azure 서버 정보 수정 완료!');
             closeModal('updateModal');
             fetchServerTickers(currentTicker.symbol);
+        }
+    }
+
+    // Azure 서버로 과목 삭제 요청 (DELETE)
+    async function deleteCurrentTicker() {
+        if (!currentTicker) return alert('삭제할 과목을 먼저 선택해주세요.');
+
+        const confirmDelete = confirm(`정말 "${currentTicker.name} (${currentTicker.symbol})" 과목을 삭제하시겠습니까?`);
+        if (!confirmDelete) return;
+
+        const res = await fetch(`${SERVER_URL}/api/tickers/${currentTicker.symbol}`, {
+            method: 'DELETE'
+        });
+
+        if (res.ok) {
+            alert('과목이 삭제되었습니다.');
+            // 로컬 캔들 캐시 정리
+            delete tickerHistory[currentTicker.symbol];
+            currentTicker = null;
+
+            // 화면 정보 초기화
+            document.getElementById('labelName').textContent = '-';
+            document.getElementById('labelSymbol').textContent = '-';
+            document.getElementById('labelInitPrice').textContent = '-';
+            document.getElementById('labelTargetPrice').textContent = '-';
+            document.getElementById('labelCurPrice').textContent = '-';
+            candleSeries.setData([]);
+
+            // 서버에서 최신 목록 다시 불러오기
+            fetchServerTickers();
+        }
+        else {const data = await res.json().catch(() => ({}));
+            alert(`삭제 실패: ${data.error || res.statusText}`);
         }
     }
 
