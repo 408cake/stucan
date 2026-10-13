@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>거래소 다중 티커 시스템</title>
+    <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0; background: #131722; color: #d1d4dc;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+        #navbar {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 10px 20px; background: #1e222d; border-bottom: 1px solid #2a2e39;
+        }
+        .left-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        #tickerTabs { display: flex; gap: 8px; flex-wrap: wrap; }
+        .tab-btn {
+            background: #2a2e39; color: #9598a1; border: none;
+            padding: 8px 14px; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 13px;
+        }
+        .tab-btn:hover { background: #363a45; color: #fff; }
+        .tab-btn.active { background: #2962ff; color: #fff; }
+        .action-btn {
+            background: #2a2e39; color: #fff; border: 1px solid #363a45;
+            padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 13px;
+        }
+        .action-btn.primary { background: #26a69a; border-color: #26a69a; }
+        #info-bar {
+            display: flex; gap: 25px; padding: 10px 20px;
+            background: #181b24; border-bottom: 1px solid #2a2e39; font-size: 14px;
+        }
+        .price-val { color: #26a69a; font-weight: bold; }
+        .target-val { color: #ff9800; font-weight: bold; }
+        #chart { width: 100vw; height: calc(100vh - 105px); }
+
+        /* 모달 */
+        .modal-overlay {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.65); justify-content: center; align-items: center; z-index: 1000;
+        }
+        .modal-box { background: #1e222d; padding: 24px; border-radius: 8px; width: 360px; border: 1px solid #2a2e39; }
+        .form-group { margin-bottom: 12px; }
+        .form-group label { display: block; font-size: 12px; margin-bottom: 4px; color: #848e9c; }
+        .form-group input {
+            width: 100%; padding: 8px 10px; background: #131722;
+            border: 1px solid #2a2e39; color: #fff; border-radius: 4px;
+        }
+        .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+    </style>
+</head>
+<body>
+
+<div id="navbar">
+    <div class="left-controls">
+        <div id="tickerTabs"></div>
+        <button class="action-btn primary" onclick="openCreateModal()">+ 과목 등록</button>
+    </div>
+    <div>
+        <button class="action-btn" onclick="openUpdateModal()">선택 과목 수정</button>
+    </div>
+</div>
+
+<div id="info-bar">
+    <div>선택 종목: <span id="labelName" style="font-weight:bold;">-</span> (<span id="labelSymbol">-</span>)</div>
+    <div>처음 가격: <span id="labelInitPrice" style="font-weight:bold;">-</span></div>
+    <div>현재 가격: <span id="labelCurPrice" class="price-val">-</span></div>
+    <div>목표 가격: <span id="labelTargetPrice" class="target-val">-</span></div>
+</div>
+
+<div id="chart"></div>
+
+<!-- 과목 등록 모달 -->
+<div id="createModal" class="modal-overlay">
+    <div class="modal-box">
+        <h3 style="margin-top:0;">Azure 서버에 새 과목 등록</h3>
+        <div class="form-group">
+            <label>심볼 티커 (예: BTC, AAPL, COIN1)</label>
+            <input type="text" id="createSymbol" placeholder="COIN1">
+        </div>
+        <div class="form-group">
+            <label>과목 이름</label>
+            <input type="text" id="createName" placeholder="코인원">
+        </div>
+        <div class="form-group">
+            <label>처음 가격 (이 가격부터 난수 시작)</label>
+            <input type="number" id="createInitPrice" placeholder="5000">
+        </div>
+        <div class="form-group">
+            <label>목표 가격</label>
+            <input type="number" id="createTargetPrice" placeholder="6000">
+        </div>
+        <div class="modal-actions">
+            <button class="action-btn" onclick="closeModal('createModal')">취소</button>
+            <button class="action-btn primary" onclick="submitCreateTicker()">서버에 등록</button>
+        </div>
+    </div>
+</div>
+
+<!-- 과목 수정 모달 -->
+<div id="updateModal" class="modal-overlay">
+    <div class="modal-box">
+        <h3 style="margin-top:0;">과목 정보 수정</h3>
+        <div class="form-group">
+            <label>변경할 과목 이름</label>
+            <input type="text" id="updateName">
+        </div>
+        <div class="form-group">
+            <label>변경할 목표 가격</label>
+            <input type="number" id="updateTargetPrice">
+        </div>
+        <div class="modal-actions">
+            <button class="action-btn" onclick="closeModal('updateModal')">취소</button>
+            <button class="action-btn primary" onclick="submitUpdateTicker()">수정 완료</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    const SERVER_URL = 'http://20.41.107.220:8080';
+
+    let tickers = [];
+    let currentTicker = null;
+    const tickerHistory = {};
+
+    // 차트 생성
+    const chartContainer = document.getElementById('chart');
+    const chart = LightweightCharts.createChart(chartContainer, {
+        width: chartContainer.clientWidth,
+        height: chartContainer.clientHeight,
+        layout: { background: { color: '#131722' }, textColor: '#d1d4dc' },
+        grid: { vertLines: { color: '#1f2434' }, horzLines: { color: '#1f2434' } },
+        timeScale: { timeVisible: true, secondsVisible: true }
+    });
+
+    const candleSeries = chart.addCandlestickSeries({
+        upColor: '#26a69a', downColor: '#ef5350',
+        borderVisible: false,
+        wickUpColor: '#26a69a', wickDownColor: '#ef5350'
+    });
+
+    window.addEventListener('resize', () => {
+        chart.applyOptions({ width: chartContainer.clientWidth, height: chartContainer.clientHeight });
+    });
+
+    // 1. Azure 서버에서 종목 목록 읽어오기 (Read)
+    async function fetchServerTickers(selectSymbol = null) {
+        try {
+            const res = await fetch(`${SERVER_URL}/api/tickers`);
+            tickers = await res.json();
+
+            const tabsContainer = document.getElementById('tickerTabs');
+            tabsContainer.innerHTML = '';
+
+            tickers.forEach(t => {
+                if (!tickerHistory[t.symbol]) tickerHistory[t.symbol] = [];
+                const btn = document.createElement('button');
+                btn.className = `tab-btn ${currentTicker && currentTicker.symbol === t.symbol ? 'active' : ''}`;
+                btn.textContent = `${t.name} (${t.symbol})`;
+                btn.onclick = () => selectTicker(t.symbol);
+                tabsContainer.appendChild(btn);
+            });
+
+            if (selectSymbol) {
+                selectTicker(selectSymbol);
+            } else if (!currentTicker && tickers.length > 0) {
+                selectTicker(tickers[0].symbol);
+            } else if (currentTicker) {
+                const updated = tickers.find(t => t.symbol === currentTicker.symbol);
+                if (updated) selectTicker(updated.symbol);
+            }
+        } catch (err) {
+            console.error('서버 데이터 읽기 실패:', err);
+        }
+    }
+
+    // 2. 탭 전환
+    function selectTicker(symbol) {
+        const found = tickers.find(t => t.symbol === symbol);
+        if (!found) return;
+        currentTicker = found;
+
+        document.querySelectorAll('#tickerTabs .tab-btn').forEach((btn, idx) => {
+            btn.classList.toggle('active', tickers[idx]?.symbol === symbol);
+        });
+
+        document.getElementById('labelName').textContent = currentTicker.name;
+        document.getElementById('labelSymbol').textContent = currentTicker.symbol;
+        document.getElementById('labelInitPrice').textContent = currentTicker.initialPrice;
+        document.getElementById('labelTargetPrice').textContent = currentTicker.targetPrice;
+
+        const hist = tickerHistory[symbol] || [];
+        candleSeries.setData(hist);
+        if (hist.length > 0) {
+            document.getElementById('labelCurPrice').textContent = hist[hist.length - 1].close;
+        }
+    }
+
+    // 3. Azure 서버의 실시간 SSE 수신
+    const eventSource = new EventSource(`${SERVER_URL}/events`);
+
+    eventSource.onmessage = (e) => {
+        try {
+            const msg = JSON.parse(e.data);
+
+            if (msg.type === 'init' && msg.tickers) {
+                for (const [sym, hist] of Object.entries(msg.tickers)) {
+                    tickerHistory[sym] = hist;
+                }
+                if (currentTicker && tickerHistory[currentTicker.symbol]?.length > 0) {
+                    candleSeries.setData(tickerHistory[currentTicker.symbol]);
+                    document.getElementById('labelCurPrice').textContent = tickerHistory[currentTicker.symbol].slice(-1)[0].close;
+                }
+            } else if (msg.type === 'update' && msg.tickers) {
+                for (const [sym, data] of Object.entries(msg.tickers)) {
+                    if (!tickerHistory[sym]) tickerHistory[sym] = [];
+                    const list = tickerHistory[sym];
+
+                    if (list.length === 0 || list[list.length - 1].time !== data.candle.time) {
+                        list.push(data.candle);
+                        if (list.length > 100) list.shift();
+                    } else {
+                        list[list.length - 1] = data.candle;
+                    }
+
+                    if (currentTicker && sym === currentTicker.symbol) {
+                        candleSeries.update(data.candle);
+                        document.getElementById('labelCurPrice').textContent = data.price;
+                    }
+                }
+            }
+        } catch (err) {
+            console.error('시세 수신 오류:', err);
+        }
+    };
+
+    // 4. 모달 및 Azure 서버로 등록/수정 요청 전송
+    function openCreateModal() { document.getElementById('createModal').style.display = 'flex'; }
+    function openUpdateModal() {
+        if (!currentTicker) return alert('과목을 선택해주세요.');
+        document.getElementById('updateName').value = currentTicker.name;
+        document.getElementById('updateTargetPrice').value = currentTicker.targetPrice;
+        document.getElementById('updateModal').style.display = 'flex';
+    }
+    function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+
+    // Azure 서버로 신규 종목 등록 요청
+    async function submitCreateTicker() {
+        const payload = {
+            symbol: document.getElementById('createSymbol').value.trim(),
+            name: document.getElementById('createName').value.trim(),
+            initialPrice: parseFloat(document.getElementById('createInitPrice').value),
+            targetPrice: parseFloat(document.getElementById('createTargetPrice').value)
+        };
+
+        if (!payload.symbol || !payload.name || isNaN(payload.initialPrice)) {
+            return alert('심볼, 이름, 처음가격을 입력해주세요.');
+        }
+
+        const res = await fetch(`${SERVER_URL}/api/tickers`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (res.ok) {
+            alert('Azure 서버에 등록 완료!');
+            closeModal('createModal');
+            fetchServerTickers(payload.symbol.toUpperCase());
+        }
+    }
+
+    // Azure 서버로 수정 요청
+    async function submitUpdateTicker() {
+        const payload = {
+            name: document.getElementById('updateName').value.trim(),
+            targetPrice: parseFloat(document.getElementById('updateTargetPrice').value)
+        };
+
+        const res = await fetch(`${SERVER_URL}/api/tickers/${currentTicker.symbol}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (res.ok) {
+            alert('Azure 서버 정보 수정 완료!');
+            closeModal('updateModal');
+            fetchServerTickers(currentTicker.symbol);
+        }
+    }
+
+    fetchServerTickers();
+</script>
+</body>
+</html>
